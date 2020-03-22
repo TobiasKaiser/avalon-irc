@@ -11,7 +11,8 @@ Quest = namedtuple('Quest', 'team_size fails_required')
 
 
 class Role:
-    optional = False
+    is_assassin = False
+    is_merlin = False
 
     def __init__(self, nick):
         self.nick = nick
@@ -35,10 +36,20 @@ class RoleMinionOfMordred(Role):
                 continue
             if game.get_role(player).is_minion_of_mordred:
                 fellow_minions.append(player)
+        if len(fellow_minions)==0:
+            return "There is no fellow Minion of Mordred."
         if len(fellow_minions)==1:
             return "Your fellow Minion of Mordred is {}.".format(fellow_minions[0])
         else:
             return "Your fellow Minions of Mordred are {}.".format(", ".join(fellow_minions))
+
+class RoleAssassin(RoleMinionOfMordred):
+    short_name="assassin"
+    long_name="Assassin"
+    long_name_article="the Assassin"
+    description="evil player with knowledge of the identities of all other Minions of Mordred and the option to win the game by identifying Merlin"
+
+    is_assassin = True
 
 class RoleLoyalServantOfArthur(Role):
     short_name="servant"
@@ -48,6 +59,23 @@ class RoleLoyalServantOfArthur(Role):
 
     evil = False
     is_minion_of_mordred = False
+
+class RoleMerlin(RoleLoyalServantOfArthur):
+    short_name="merlin"
+    long_name="Merlin"
+    long_name_article="Merlin"
+    description="good player with knowledge of the identities of the Minions of Mordred"
+    is_merlin = True
+
+    def get_initial_knowledge(self, game):
+        minions=[]
+        for player in game.players:
+            if game.get_role(player).is_minion_of_mordred:
+                minions.append(player)
+        if len(minions)==1:
+            return "The Minion of Mordred is {}.".format(minions[0])
+        else:
+            return "The Minions of Mordred are {}.".format(", ".join(minions))    
 
 class AvalonGame:
 
@@ -70,7 +98,7 @@ class AvalonGame:
         10: 4
     }
 
-    Assemble, TeamSel, TeamVote, QuestVote, Finished = range(5)
+    Assemble, TeamSel, TeamVote, QuestVote, Assassination, Finished = range(6)
     Good, Evil = range(2)
 
     def get_role(self, nick):
@@ -138,6 +166,29 @@ class AvalonGame:
                 self.handle_start(nick)
             elif cmd=="team":
                 self.handle_team(nick, arg)
+            elif cmd=="kill":
+                self.handle_kill(nick, arg)
+
+    def handle_kill(self, nick, arg):
+        if not (self.phase == AvalonGame.Assassination):
+            self.bot.send_pubmsg("{}: Command not available.".format(nick))
+            return
+
+        if not (nick == self.get_assassin()):
+            self.bot.send_pubmsg("{}: You are not the Assassin.".format(nick))
+            return
+
+        if not (arg in self.players):
+            self.bot.send_pubmsg("{}: Invalid player.".format(nick))
+            return
+
+        if arg == self.get_merlin():
+            self.bot.send_pubmsg("The Assassin has killed Merlin!")
+            self.end_game(winner=AvalonGame.Evil)
+        else:
+            self.bot.send_pubmsg("The Assassin was unsuccessful.")
+            self.end_game(winner=AvalonGame.Good)
+
 
     def handle_join(self, nick):
         if not (self.phase == AvalonGame.Assemble):
@@ -171,9 +222,9 @@ class AvalonGame:
         evil_player_count = self.game_plans_evil_count[len(self.players)]
         good_player_count = len(self.players) - evil_player_count
 
-        evil_roles = []
+        evil_roles = [RoleAssassin]
 
-        good_roles = []
+        good_roles = [RoleMerlin]
 
         # TODO: Append optional roles to evil_roles and good_roles dictionary.
 
@@ -304,7 +355,7 @@ class AvalonGame:
                 good_roles.append("{}x {}".format(count, role))
 
         print(count_evil, count_good)
-        return "Good role cards in play: {}. Evil role cards in play: {}".format(
+        return "Good role cards in play: {}. Evil role cards in play: {}.".format(
             ", ".join(good_roles),
             ", ".join(evil_roles)
         )
@@ -343,7 +394,7 @@ class AvalonGame:
         self.players_voted_accept = []
         self.players_voted_reject = []
 
-        self.bot.send_pubmsg("{} Please vote for or against this team with \"/m Avalon accept\" or h \"/m Avalon reject\".".format(self.team_str()))
+        self.bot.send_pubmsg("{} Please vote for or against this team with \"/msg Avalon accept\" or h \"/msg Avalon reject\".".format(self.team_str()))
 
     def team_str(self):
         return "{} has chosen the following team: {}.".format(
@@ -397,7 +448,7 @@ class AvalonGame:
         )
 
     def enter_questvote(self):
-        self.bot.send_pubmsg("Team {}: you have been accepted for the quest. {} Please play success or fail for the quest with \"/m Avalon success\" or h \"/m Avalon fail\".{}".format(
+        self.bot.send_pubmsg("Team {}: you have been accepted for the quest. {} Please play success or fail for the quest with \"/msg Avalon success\" or h \"/msg Avalon fail\".{}".format(
             ", ".join(self.team),
             self.team_vote_result_str(),
             self.get_special_win_condition_or_empty_str()
@@ -489,6 +540,32 @@ class AvalonGame:
     def handle_highscore(self):
         self.bot.send_pubmsg("Highscore: {}".format(self.bot.highscore.get_highscore_str()))
 
+    def get_assassin(self):
+        for idx in range(len(self.players)):
+            player = self.players[idx]
+            role = self.roles[idx]
+            if role.is_assassin:
+                return player
+        return None
+
+    def get_merlin(self):
+        for idx in range(len(self.players)):
+            player = self.players[idx]
+            role = self.roles[idx]
+            if role.is_merlin:
+                return player
+        return None        
+
+    def enter_assassination_phase_or_end_game(self):
+        assassin = self.get_assassin()
+        if assassin:
+            self.phase = AvalonGame.Assassination
+            self.bot.send_pubmsg("Good has almost won, but the Assassin can turn still turn the game around by identifying and assassinating Merlin by typing \"!kill Player1\".")
+            # Name of Assassin must not be releaved at this stage.
+
+        else:
+            self.end_game(winner=AvalonGame.Good)
+
     def enter_next_quest_or_finish(self):
         total_fails     = len(list(filter(lambda x: not x, self.quest_results)))
         total_successes = len(list(filter(lambda x:     x, self.quest_results)))
@@ -499,8 +576,7 @@ class AvalonGame:
             return
 
         if total_successes >= 3:
-            # Add Assassin hook here
-            self.end_game(winner=AvalonGame.Good)
+            self.enter_assassination_phase_or_end_game()
             return
 
         self.enter_teamsel()
@@ -656,7 +732,6 @@ class AvalonBot(irc.bot.SingleServerIRCBot):
             print("privmsg to {}: {}".format(nick, msg))
             #self.send_pubmsg("((privmsg to {}: {}))".format(nick, msg))
         
-
 def main():
     import sys
 
@@ -679,7 +754,6 @@ def main():
 
     bot = AvalonBot(channel, nickname, server, port)
     bot.start()
-
 
 if __name__ == "__main__":
     main()
