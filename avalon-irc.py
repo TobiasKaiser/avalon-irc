@@ -23,7 +23,8 @@ class Role:
 
 class RoleMinionOfMordred(Role):
     short_name="minion"
-    long_name="a Minion of Mordred"
+    long_name="Minion of Mordred"
+    long_name_article="a Minion of Mordred"
     description="evil player with knowledge of the identities of all other Minions of Mordred"
 
     evil = True
@@ -43,7 +44,8 @@ class RoleMinionOfMordred(Role):
 
 class RoleLoyalServantOfArthur(Role):
     short_name="servant"
-    long_name="a Loyal Servant of Arthur"
+    long_name="Loyal Servant of Arthur"
+    long_name_article="a Loyal Servant of Arthur"
     description="good player with no knowledge about identities of other players"
 
     evil = False
@@ -198,7 +200,7 @@ class AvalonGame:
         # Send info to all players
         for player in self.players:
             role = self.get_role(player)
-            msg = "You are {} ({}). {}".format(role.long_name, role.description, role.get_initial_knowledge(self))
+            msg = "You are {} ({}). {}".format(role.long_name_article, role.description, role.get_initial_knowledge(self))
             self.bot.send_privmsg(player, msg)
 
         return True
@@ -225,7 +227,10 @@ class AvalonGame:
             self.bot.send_pubmsg("Game could not be started due to error in assigning roles. Please check your options for consistency.")
             return
 
-        self.bot.send_pubmsg("The game has started! Players are {}.".format(self.players_str()))
+        self.bot.send_pubmsg("The game has started! Players are {}. {}".format(
+            self.players_str(),
+            self.roles_str()
+        ))
 
         self.enter_teamsel()
 
@@ -254,6 +259,35 @@ class AvalonGame:
 
         self.bot.send_pubmsg("{}".format(self.quest_overview_str()))
         self.bot.send_pubmsg("{} (Type \"!team Player1 Player2 ...\")".format(self.teamsel_str()))
+
+    def roles_str(self):
+        count_evil={}
+        count_good={}
+        for role in self.roles:
+            cur_count=(count_evil if role.evil else count_good)
+            if role.long_name in cur_count:
+                cur_count[role.long_name]+=1
+            else:
+                cur_count[role.long_name]=1
+
+        evil_roles=[]
+        for role, count in count_evil.items():
+            if count==1:
+                evil_roles.append(role)
+            else:
+                evil_roles.append("{}x {}".format(count, role))
+        good_roles=[]
+        for role, count in count_good.items():
+            if count==1:
+                good_roles.append(role)
+            else:
+                good_roles.append("{}x {}".format(count, role))
+
+        print(count_evil, count_good)
+        return "Good role cards in play: {}. Evil role cards in play: {}".format(
+            ", ".join(good_roles),
+            ", ".join(evil_roles)
+        )
 
     def handle_team(self, nick, arg):
         if not (self.phase == AvalonGame.TeamSel):
@@ -421,7 +455,6 @@ class AvalonGame:
             self.enter_next_quest_or_finish()
 
     def enter_next_quest_or_finish(self):
-
         total_fails     = len(list(filter(lambda x: not x, self.quest_results)))
         total_successes = len(list(filter(lambda x:     x, self.quest_results)))
 
