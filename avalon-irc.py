@@ -13,7 +13,9 @@ Quest = namedtuple('Quest', 'team_size fails_required')
 class Role:
     is_assassin = False
     is_merlin = False
+    is_percival = False
     unknown_to_merlin = False
+    looks_like_merlin_to_percival = False
 
     def __init__(self, nick):
         self.nick = nick
@@ -21,6 +23,10 @@ class Role:
     def get_initial_knowledge(self, game):
         return "You have no knowledge of other identities."
     
+    def validate_roles(self, roles):
+        """Return True if roles contain all roles that are required for this role to participate properly in the game."""
+        return True
+
 class RoleMinionOfMordred(Role):
     short_name="minion"
     long_name="Minion of Mordred"
@@ -90,6 +96,7 @@ class RolePercival(RoleLoyalServantOfArthur):
     long_name="Percival"
     long_name_article="Percival"
     description="good player with knowledge of the identity of Merlin"
+    is_percival = True
 
     def get_initial_knowledge(self, game):
         merlins=[]
@@ -129,6 +136,14 @@ class RoleMorgana(RoleMinionOfMordred):
 
     looks_like_merlin_to_percival = True
 
+    def validate_roles(self, all_roles):
+        # Percival needs to present for Morgana to participate.
+        percival_present=False
+        for role in all_roles:
+            if role.is_percival:
+                percival_present = True
+        return percival_present
+
 class AvalonGame:
 
     # Map player count to lists of five quests
@@ -149,6 +164,8 @@ class AvalonGame:
         9: 3,
         10: 4
     }
+    
+    valid_game_args = ["percival", "mordred", "oberon", "morgana"]
 
     Assemble, TeamSel, TeamVote, QuestVote, Assassination, Finished = range(6)
     Good, Evil = range(2)
@@ -180,6 +197,7 @@ class AvalonGame:
         self.players_voted = [] # used for both team vote and quest itself
         self.players_voted_accept = [] # used for team vote only
         self.players_voted_reject = [] # used for team vote only
+        self.game_args = []
 
     def handle_privmsg(self, nick, msg):
         print("privmsg from {}: {}".format(nick, msg))
@@ -215,7 +233,7 @@ class AvalonGame:
             elif cmd=="leave":
                 self.handle_leave(nick)
             elif cmd=="start":
-                self.handle_start(nick)
+                self.handle_start(nick, arg)
             elif cmd=="team":
                 self.handle_team(nick, arg)
             elif cmd=="kill":
@@ -275,8 +293,16 @@ class AvalonGame:
         good_player_count = len(self.players) - evil_player_count
 
         evil_roles = [RoleAssassin]
+        if "mordred" in self.game_args:
+            evil_roles.append(RoleMordred)
+        if "oberon" in self.game_args:
+            evil_roles.append(RoleOberon)
+        if "morgana" in self.game_args:
+            evil_roles.append(RoleMorgana)
 
         good_roles = [RoleMerlin]
+        if "percival" in self.game_args:
+            good_roles.append(RolePercival)
 
         # TODO: Append optional roles to evil_roles and good_roles dictionary.
 
@@ -295,10 +321,21 @@ class AvalonGame:
 
         # Assign and shuffle self.roles list
         role_classes = good_roles + evil_roles
+
         random.shuffle(role_classes)
-        self.roles=[]
+        roles=[]
         for player_idx, role_class in enumerate(role_classes):
-            self.roles.append(role_class(self.players[player_idx]))
+            roles.append(role_class(self.players[player_idx]))
+
+        # Validate roles: Some roles require other roles to be present.
+        roles_valid=True
+        for r in roles:
+            if not r.validate_roles(roles):
+                roles_valid=False
+        if not roles_valid:
+            return False
+
+        self.roles = roles
 
         # Send info to all players
         for player in self.players:
@@ -309,7 +346,9 @@ class AvalonGame:
         return True
 
 
-    def handle_start(self, nick):
+    def handle_start(self, nick, arg):
+
+
         if not (self.phase == AvalonGame.Assemble):
             self.bot.send_pubmsg("{}: Command not available.".format(nick))
             return
@@ -317,6 +356,16 @@ class AvalonGame:
         if not (nick in self.players):
             self.bot.send_pubmsg("{}: You are not registerd for the game.".format(nick))
             return
+
+        # Evaluate args:
+        game_args=arg.lower().strip().split()
+        
+        for arg in game_args:
+            if not (arg in self.valid_game_args):
+                self.bot.send_pubmsg("{}: Invalid game argument.".format(nick))
+                return
+
+        self.game_args = game_args
 
         if len(self.players)<5:
             self.bot.send_pubmsg("{}: At least five players are required to start.".format(nick))
