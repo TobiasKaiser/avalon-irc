@@ -8,6 +8,46 @@ from collections import namedtuple
 
 Quest = namedtuple('Quest', 'team_size fails_required')
 
+
+class Role:
+    optional = False
+
+    def __init__(self, nick):
+        self.nick = nick
+
+    def get_initial_knowledge(self, game):
+        return "You have no knowledge about other identities."
+    
+
+
+class RoleMinionOfMordred(Role):
+    short_name="minion"
+    long_name="a Minion of Mordred"
+    description="evil player with knowledge of the identities of all other Minions of Mordred"
+
+    evil = True
+    is_minion_of_mordred = True
+
+    def get_initial_knowledge(self, game):
+        fellow_minions=[]
+        for player in game.players:
+            if player == self.nick:
+                continue
+            if game.get_role(player).is_minion_of_mordred:
+                fellow_minions.append(player)
+        if len(fellow_minions)==1:
+            return "Your fellow Minion of Mordred is {}.".format(fellow_minions[0])
+        else:
+            return "Your fellow Minions of Mordred are {}.".format(", ".join(fellow_minions))
+
+class RoleLoyalServantOfArthur(Role):
+    short_name="servant"
+    long_name="a Loyal Servant of Arthur"
+    description="good player with no knowledge about identities of other players"
+
+    evil = False
+    is_minion_of_mordred = False
+
 class AvalonGame:
 
     # Map player count to lists of five quests
@@ -20,8 +60,21 @@ class AvalonGame:
         10: [Quest(3, 1), Quest(4, 1), Quest(4, 1), Quest(5, 2), Quest(5, 1)]
     }
 
+    game_plans_evil_count = {
+        5: 2,
+        6: 2,
+        7: 3,
+        8: 3,
+        9: 3,
+        10: 4
+    }
+
     Assemble, TeamSel, TeamVote, MissionVote, Finished = range(5)
     Good, Evil = range(2)
+
+    def get_role(self, nick):
+        player_idx = self.players.index(nick)
+        return self.roles[player_idx]
 
     @property
     def game_plan(self):
@@ -37,6 +90,7 @@ class AvalonGame:
         #self.players = []
         self.players=["a", "b", "c",  "d", "Morn"]
         self.players.sort()
+        self.roles=[]
         self.bot = bot
         self.teamsel_player_idx = None
         self.failed_votes = 0
@@ -103,6 +157,50 @@ class AvalonGame:
         else:
             self.bot.send_pubmsg("{}: You are not registered.".format(nick))
 
+
+    def assign_roles(self):
+        """Assigns roles to players by assigning self.roles list.
+        If role assignment is successful, return True, else return False.
+        """
+        
+        evil_player_count = self.game_plans_evil_count[len(self.players)]
+        good_player_count = len(self.players) - evil_player_count
+
+        evil_roles = []
+
+        good_roles = []
+
+        # TODO: Append optional roles to evil_roles and good_roles dictionary.
+
+        if len(evil_roles) > evil_player_count:
+            # Game cannot be started because too many optional evil roles are enabled
+            return False
+        if len(good_roles) > good_player_count:
+            # Game cannot be started because too many optional good roles are enabled
+            return False
+
+        # Fill up remaining slots with RoleMinionOfMordred, RoleLoyalServantOfArthur:
+        while len(evil_roles) < evil_player_count:
+            evil_roles.append(RoleMinionOfMordred)
+        while len(good_roles) < good_player_count:
+            good_roles.append(RoleLoyalServantOfArthur)
+
+        # Assign and shuffle self.roles list
+        role_classes = good_roles + evil_roles
+        random.shuffle(role_classes)
+        self.roles=[]
+        for player_idx, role_class in enumerate(role_classes):
+            self.roles.append(role_class(self.players[player_idx]))
+
+        # Send info to all players
+        for player in self.players:
+            role = self.get_role(player)
+            msg = "You are {} ({}). {}".format(role.long_name, role.description, role.get_initial_knowledge(self))
+            self.bot.send_privmsg(player, msg)
+
+        return True
+
+
     def handle_start(self, nick):
         if not (self.phase == AvalonGame.Assemble):
             self.bot.send_pubmsg("{}: Command not available.".format(nick))
@@ -118,6 +216,10 @@ class AvalonGame:
 
         if len(self.players)>10:
             self.bot.send_pubmsg("{}: At most ten players are required to start.".format(nick))
+            return
+
+        if not self.assign_roles():
+            self.bot.send_pubmsg("Game could not be started due to error in assigning roles. Please check your options for consistency.")
             return
 
         self.bot.send_pubmsg("The game has started! Players are {}.".format(self.players_str()))
@@ -224,7 +326,7 @@ class AvalonGame:
 
 
 
-class TestBot(irc.bot.SingleServerIRCBot):
+class AvalonBot(irc.bot.SingleServerIRCBot):
     def __init__(self, channel, nickname, server, port=6667):
         irc.bot.SingleServerIRCBot.__init__(self, [(server, port)], nickname, nickname)
         self.channel = channel
@@ -280,9 +382,8 @@ class TestBot(irc.bot.SingleServerIRCBot):
 def main():
     import sys
 
-
     if len(sys.argv) != 4:
-        print("Usage: testbot <server[:port]> <channel> <nickname>")
+        print("Usage: avalon-irc <server[:port]> <channel> <nickname>")
         sys.exit(1)
 
     s = sys.argv[1].split(":", 1)
@@ -298,8 +399,7 @@ def main():
     channel = sys.argv[2]
     nickname = sys.argv[3]
 
-    bot = TestBot(channel, nickname, server, port)
-    print("Hello World")
+    bot = AvalonBot(channel, nickname, server, port)
     bot.start()
 
 
