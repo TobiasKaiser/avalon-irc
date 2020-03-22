@@ -4,6 +4,7 @@ import irc.bot
 #import irc.strings
 import string
 import random
+import copy
 from collections import namedtuple
 
 Quest = namedtuple('Quest', 'team_size fails_required')
@@ -69,7 +70,7 @@ class AvalonGame:
         10: 4
     }
 
-    Assemble, TeamSel, TeamVote, MissionVote, Finished = range(5)
+    Assemble, TeamSel, TeamVote, QuestVote, Finished = range(5)
     Good, Evil = range(2)
 
     def get_role(self, nick):
@@ -87,16 +88,18 @@ class AvalonGame:
     def __init__(self, bot):
         self.phase = AvalonGame.Assemble
 
+        self.quest_results=[]
         #self.players = []
         self.players=["a", "b", "c",  "d", "Morn"]
         self.players.sort()
         self.roles=[]
         self.bot = bot
         self.teamsel_player_idx = None
-        self.failed_votes = 0
-        self.quest_results = []
         self.team = []
+        self.failed_votes = 0 # used for quest only
         self.players_voted = [] # used for both team vote and quest itself
+        self.players_voted_accept = [] # used for team vote only
+        self.players_voted_reject = [] # used for team vote only
 
     def handle_privmsg(self, nick, msg):
         print("privmsg from {}: {}".format(nick, msg))
@@ -232,7 +235,7 @@ class AvalonGame:
             self.failed_votes+= 1
             if self.failed_votes >= 5:
                 self.bot.send_pubmsg("Five failed votes: Evil wins.")
-                self.phase = Finished
+                self.phase = AvalonGame.Finished
                 self.winner = AvalonGame.Evil
             elif self.failed_votes == 4:
                 self.bot.send_pubmsg("Failed votes in this round: {}. When five failed votes are reached, Evil wins!".format(self.failed_votes))
@@ -282,8 +285,11 @@ class AvalonGame:
         self.team = team
         self.phase = AvalonGame.TeamVote
 
-        self.bot.send_pubmsg("{} Please vote for or against this team with \"/m Avalon accept\" or h \"/m Avalon reject\".".format(self.team_str()))
+        self.players_voted = []
+        self.players_voted_accept = []
+        self.players_voted_reject = []
 
+        self.bot.send_pubmsg("{} Please vote for or against this team with \"/m Avalon accept\" or h \"/m Avalon reject\".".format(self.team_str()))
 
     def team_str(self):
         return "{} has chosen the following team: {}.".format(
@@ -292,7 +298,55 @@ class AvalonGame:
         )
 
     def handle_accept_reject(self, nick, accept):
-        pass
+        if not (self.phase == AvalonGame.TeamVote):
+            self.bot.send_privmsg(nick, "Command not available.")
+            return
+
+        if not (nick in self.players):
+            self.bot.send_privmsg(nick, "Not eligible for vote.")
+            return
+
+        if nick in self.players_voted:
+            self.bot.send_privmsg(nick, "Double vote ignored.")
+            return
+
+        self.players_voted.append(nick)
+        if accept:
+            self.players_voted_accept.append(nick)
+        else:
+            self.players_voted_reject.append(nick)
+
+        missing_players=copy.copy(self.players)
+        for player_voted in self.players_voted:
+            missing_players.remove(player_voted)
+
+        self.bot.send_privmsg(nick, "Vote cast.")
+        if len(missing_players) > 0:
+            self.bot.send_pubmsg("{} has voted. Missing votes from {}.".format(nick, ", ".join(missing_players)))
+        else:
+            # Vote completed
+            accepted = len(self.players_voted_accept) > len(self.players_voted_reject)
+            
+            if accepted:
+                self.enter_qeuestvote()
+            else:
+                self.enter_teamsel(after_failed_vote=True)
+
+    def team_vote_result_str(self):
+        return "{} voted to accept the team. {} voted to reject the team.".format(
+            ", ".join(self.players_voted_accept),
+            ", ".join(self.players_voted_reject)
+        )
+
+    def enter_qeuestvote(self):
+        self.bot.send_pubmsg("Team {}: you have been accepted for the quest. {} Please play success or fail for the qeust with \"/m Avalon success\" or h \"/m Avalon fail\".{}".format(
+            ", ".join(self.team),
+            self.team_vote_result_str(),
+            self.get_special_win_condition_or_empty_str()
+        ))
+        self.players_voted=[]
+        self.failed_votes=0
+        self.phase = AvalonGame.QuestVote
 
     def handle_success_fail(self, nick, fail):
         pass
@@ -303,16 +357,26 @@ class AvalonGame:
     def players_str(self):
         return ", ".join(self.players) if len(self.players) >= 1 else "none"
 
+    def get_team_size(self):
+        return self.game_plan[self.current_quest].team_size
+
+    def get_fails_required(self):
+        return self.game_plan[self.current_quest].fails_required
+
+    def get_special_win_condition_or_empty_str(self):
+        return " Two fails are required to fail this quest." if self.get_fails_required() == 2 else ""
+
+    def get_teamsel_player(self):
+        return self.players[self.teamsel_player_idx]
+
     def teamsel_str(self):
-        fails_required = self.game_plan[self.current_quest].fails_required
-        team_size = self.game_plan[self.current_quest].team_size
-        teamsel_player = self.players[self.teamsel_player_idx]
+        
 
         return "For quest {}/5, {} now selects a team of {} players.{}".format(
             self.current_quest+1,
-            teamsel_player,
-            team_size,
-            " Two fails are required to fail this quest." if fails_required == 2 else ""
+            self.get_teamsel_player(),
+            self.get_team_size(),
+            self.get_special_win_condition_or_empty_str()
         )
 
     def handle_info(self):
@@ -362,7 +426,7 @@ class AvalonBot(irc.bot.SingleServerIRCBot):
             first_excl = msg[2:].find(" ")
             if first_excl>=0:
                 print("Debug privmsg received.")
-                self.game.handle_privmsg(msg[2:2+first_excl], msg[2+first_excl:])
+                self.game.handle_privmsg(msg[2:2+first_excl], msg[2+first_excl+1:])
         else:
             self.game.handle_pubmsg(nick, msg)
         self.check_finish()
@@ -376,7 +440,8 @@ class AvalonBot(irc.bot.SingleServerIRCBot):
         self.connection.privmsg(nick, msg)
         #self.connection.notice(nick, msg)
         if self.debug_game:
-            self.send_pubmsg("((privmsg to {}: {}))".format(nick, msg))
+            print("privmsg to {}: {}".format(nick, msg))
+            #self.send_pubmsg("((privmsg to {}: {}))".format(nick, msg))
         
 
 def main():
