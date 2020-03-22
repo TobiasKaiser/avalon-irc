@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import irc.bot
-#import irc.strings
+import json
 import string
 import random
 import copy
@@ -19,8 +19,6 @@ class Role:
     def get_initial_knowledge(self, game):
         return "You have no knowledge about other identities."
     
-
-
 class RoleMinionOfMordred(Role):
     short_name="minion"
     long_name="Minion of Mordred"
@@ -90,7 +88,7 @@ class AvalonGame:
     def __init__(self, bot):
         self.phase = AvalonGame.Assemble
 
-        self.quest_results=[]
+        self.quest_results=[True, True, False, False]
         #self.players = []
         self.players=["a", "b", "c",  "d", "Morn"]
         self.players.sort()
@@ -106,13 +104,13 @@ class AvalonGame:
     def handle_privmsg(self, nick, msg):
         print("privmsg from {}: {}".format(nick, msg))
         msg=msg.lower()
-        if msg=="accept":
+        if msg=="accept" or msg=="a":
             self.handle_accept_reject(nick, accept=True)
-        elif msg=="reject":
+        elif msg=="reject" or msg=="r":
             self.handle_accept_reject(nick, accept=False)
-        elif msg=="success":
+        elif msg=="success" or msg=="s":
             self.handle_success_fail(nick, fail=False)
-        elif msg=="fail":
+        elif msg=="fail" or msg=="f":
             self.handle_success_fail(nick, fail=True)
         elif msg=="identify":
             self.handle_identify(nick)
@@ -130,6 +128,8 @@ class AvalonGame:
                 arg = ""
             if cmd=="info":
                 self.handle_info()
+            elif cmd=="highscore":
+                self.handle_highscore()
             elif cmd=="join":
                 self.handle_join(nick)
             elif cmd=="leave":
@@ -234,14 +234,34 @@ class AvalonGame:
 
         self.enter_teamsel()
 
+    def winner_str(self):
+        assert self.phase == AvalonGame.Finished
+
+        evil_players=[]
+        good_players=[]
+        
+        for idx in range(len(self.players)):
+            player = self.players[idx]
+            role = self.roles[idx]
+            (evil_players if role.evil else good_players).append("{} as {}".format(
+                player, role.long_name
+            ))
+
+        return "{} wins! Evil players were: {}. Good players were: {}.".format(
+            "Evil" if self.winner == AvalonGame.Evil else "Good",
+            ", ".join(evil_players),
+            ", ".join(good_players)
+        )
+
+
+
     def enter_teamsel(self, after_failed_vote=False):
         # Increment failed votes:
         if after_failed_vote:
             self.failed_votes+= 1
             if self.failed_votes >= 5:
                 self.bot.send_pubmsg("Five failed votes: Evil wins.")
-                self.phase = AvalonGame.Finished
-                self.winner = AvalonGame.Evil
+                self.end_game(winner=AvalonGame.Evil)
             elif self.failed_votes == 4:
                 self.bot.send_pubmsg("Failed votes in this round: {}. When five failed votes are reached, Evil wins!".format(self.failed_votes))
             else:
@@ -454,20 +474,33 @@ class AvalonGame:
 
             self.enter_next_quest_or_finish()
 
+    def end_game(self, winner):
+        self.phase = AvalonGame.Finished
+        self.winner = winner
+
+        self.bot.send_pubmsg("{}".format(self.quest_overview_str()))
+        self.bot.send_pubmsg("{}".format(self.winner_str()))
+
+        winners, losers = self.get_winners_losers()
+        self.bot.highscore.update(winners, losers)
+
+        self.bot.send_pubmsg("Highscore: {}".format(self.bot.highscore.get_highscore_str()))
+
+    def handle_highscore(self):
+        self.bot.send_pubmsg("Highscore: {}".format(self.bot.highscore.get_highscore_str()))
+
     def enter_next_quest_or_finish(self):
         total_fails     = len(list(filter(lambda x: not x, self.quest_results)))
         total_successes = len(list(filter(lambda x:     x, self.quest_results)))
 
-        if total_fails > 3:
-            self.phase = AvalonGame.Finished
-            self.winner = AvalonGame.Evil
+
+        if total_fails >= 3:
+            self.end_game(winner=AvalonGame.Evil)
             return
 
-        if total_successes > 3:
+        if total_successes >= 3:
             # Add Assassin hook here
-
-            self.phase = AvalonGame.Finished
-            self.winner = AvalonGame.Good
+            self.end_game(winner=AvalonGame.Good)
             return
 
         self.enter_teamsel()
@@ -506,15 +539,75 @@ class AvalonGame:
         elif self.phase == AvalonGame.TeamVote:
             pass
 
+    def get_winners_losers(self):
+        winners=[]
+        losers=[]
+        for idx in range(len(self.players)):
+            role = self.roles[idx]
+            player = self.players[idx]
+            if self.winner == AvalonGame.Good:
+                if role.evil:
+                    losers.append(player)
+                else:
+                    winners.append(player)
+            else: # self.winner == AvalonGame.Evil
+                if role.evil:
+                    winners.append(player)
+                else:
+                    losers.append(player)
+        return winners, losers
 
+class Highscore:
+    def __init__(self, json_filename):
+        self.json_filename=json_filename
+        self.load()
+
+    def load(self):
+        try:
+            with open(self.json_filename, "r") as f:
+                self.data = json.load(f)
+        except FileNotFoundError:
+            self.data={}
+            self.save()
+
+    def save(self):
+        with open(self.json_filename, "w") as f:
+            json.dump(self.data, f, indent=4)
+
+    def ensure_record_exists(self, player):
+        if not player in self.data:
+            self.data[player]={
+                "won":0,
+                "lost":0
+            }
+
+    def update(self, winners, losers):
+        for winner in winners:
+            self.ensure_record_exists(winner)
+            self.data[winner]["won"]+=1
+        for loser in losers:
+            self.ensure_record_exists(loser)
+            self.data[loser]["lost"]+=1
+        self.save()
+
+    def get_highscore_str(self):
+        entries = list(self.data.items())
+        entries.sort(key=lambda p: p[1]["won"], reverse=True)
+        entries_str=[]
+        for player, player_data in entries:
+            entries_str.append("{} (won: {}, lost: {})".format(
+                player, player_data["won"], player_data["lost"]
+            ))
+        return ", ".join(entries_str)
 
 
 class AvalonBot(irc.bot.SingleServerIRCBot):
-    def __init__(self, channel, nickname, server, port=6667):
+    def __init__(self, channel, nickname, server, port=6667, highscore_filename="highscore.json"):
         irc.bot.SingleServerIRCBot.__init__(self, [(server, port)], nickname, nickname)
         self.channel = channel
         self.game = AvalonGame(self)
         self.debug_game = True
+        self.highscore = Highscore(highscore_filename)
 
     def on_nicknameinuse(self, c, e):
         c.nick(c.get_nickname() + "_")
@@ -523,9 +616,10 @@ class AvalonBot(irc.bot.SingleServerIRCBot):
         c.join(self.channel)
 
     def check_finish(self):
-        # TODO
         if self.game.phase == AvalonGame.Finished:
-            print("game finished....")
+            # Start new game:
+            self.game = AvalonGame(self)
+            
 
     def on_privmsg(self, c, e):
         nick = e.source.split("!")[0]
