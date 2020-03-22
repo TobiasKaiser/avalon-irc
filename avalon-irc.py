@@ -252,7 +252,7 @@ class AvalonGame:
 
         self.phase = AvalonGame.TeamSel
 
-
+        self.bot.send_pubmsg("{}".format(self.quest_overview_str()))
         self.bot.send_pubmsg("{} (Type \"!team Player1 Player2 ...\")".format(self.teamsel_str()))
 
     def handle_team(self, nick, arg):
@@ -328,18 +328,22 @@ class AvalonGame:
             accepted = len(self.players_voted_accept) > len(self.players_voted_reject)
             
             if accepted:
-                self.enter_qeuestvote()
+                self.enter_questvote()
             else:
+                self.bot.send_pubmsg("The proposed team {} has been rejected. {}".format(
+                    ", ".join(self.team),
+                    self.team_vote_result_str()
+                ))   
                 self.enter_teamsel(after_failed_vote=True)
 
     def team_vote_result_str(self):
         return "{} voted to accept the team. {} voted to reject the team.".format(
-            ", ".join(self.players_voted_accept),
-            ", ".join(self.players_voted_reject)
+            ", ".join(self.players_voted_accept) if len(self.players_voted_accept) > 0 else "Nobody",
+            ", ".join(self.players_voted_reject) if len(self.players_voted_reject) > 0 else "Nobody"
         )
 
-    def enter_qeuestvote(self):
-        self.bot.send_pubmsg("Team {}: you have been accepted for the quest. {} Please play success or fail for the qeust with \"/m Avalon success\" or h \"/m Avalon fail\".{}".format(
+    def enter_questvote(self):
+        self.bot.send_pubmsg("Team {}: you have been accepted for the quest. {} Please play success or fail for the quest with \"/m Avalon success\" or h \"/m Avalon fail\".{}".format(
             ", ".join(self.team),
             self.team_vote_result_str(),
             self.get_special_win_condition_or_empty_str()
@@ -348,8 +352,92 @@ class AvalonGame:
         self.failed_votes=0
         self.phase = AvalonGame.QuestVote
 
+    def quest_overview_str(self):
+        overview_str=""
+        for idx in range(5):
+            if idx>0:
+                overview_str+=" | "
+            quest_result="undecided"
+            if self.current_quest > idx:
+                if self.quest_results[idx]:
+                    quest_result="succeeded"
+                else:
+                    quest_result="failed"
+            fails_required = self.game_plan[idx].fails_required
+            team_size = self.game_plan[idx].team_size
+            overview_str+="Quest {} (team of {}{}): {}".format(
+                idx+1,
+                team_size,
+                ", two fail votes required to fail" if fails_required == 2 else "",
+                quest_result
+            )
+        return overview_str
+
+    def get_special_win_condition_or_empty_str(self):
+        return " Two fail votes are required to fail this quest." if self.get_fails_required() == 2 else ""
+        return overview_str
+
+
     def handle_success_fail(self, nick, fail):
-        pass
+        if not (self.phase == AvalonGame.QuestVote):
+            self.bot.send_privmsg(nick, "Command not available.")
+            return
+
+        if not (nick in self.team):
+            self.bot.send_privmsg(nick, "Not eligible for vote.")
+            return
+
+        if nick in self.players_voted:
+            self.bot.send_privmsg(nick, "Double vote ignored.")
+            return
+
+        if (not self.get_role(nick).evil) and fail:
+            self.bot.send_privmsg(nick, "You are not allowed to vote fail.")
+            return
+
+        self.players_voted.append(nick)
+        if fail:
+            self.failed_votes += 1
+
+        missing_players=copy.copy(self.team)
+        for player_voted in self.players_voted:
+            missing_players.remove(player_voted)
+
+        self.bot.send_privmsg(nick, "Vote cast.")
+        if len(missing_players) > 0:
+            self.bot.send_pubmsg("{} has voted. Missing votes from {}.".format(nick, ", ".join(missing_players)))
+        else:
+            # Vote completed
+            success = self.failed_votes < self.get_fails_required()
+
+            self.quest_results.append(success)
+
+            self.bot.send_pubmsg("Quest {}. Number of success votes was {}, number of fail votes was {}.".format(
+                "succeeded" if success else "failed",
+                len(self.team) - self.failed_votes,
+                self.failed_votes
+            ))
+
+            self.enter_next_quest_or_finish()
+
+    def enter_next_quest_or_finish(self):
+
+        total_fails     = len(list(filter(lambda x: not x, self.quest_results)))
+        total_successes = len(list(filter(lambda x:     x, self.quest_results)))
+
+        if total_fails > 3:
+            self.phase = AvalonGame.Finished
+            self.winner = AvalonGame.Evil
+            return
+
+        if total_successes > 3:
+            # Add Assassin hook here
+
+            self.phase = AvalonGame.Finished
+            self.winner = AvalonGame.Good
+            return
+
+        self.enter_teamsel()
 
     def handle_identify(self):
         pass
@@ -370,8 +458,6 @@ class AvalonGame:
         return self.players[self.teamsel_player_idx]
 
     def teamsel_str(self):
-        
-
         return "For quest {}/5, {} now selects a team of {} players.{}".format(
             self.current_quest+1,
             self.get_teamsel_player(),
