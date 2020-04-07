@@ -185,9 +185,10 @@ class AvalonGame:
     def __init__(self, bot):
         self.phase = AvalonGame.Assemble
 
-        self.quest_results=[True, True, False, False]
-        #self.players = []
-        self.players=["a", "b", "c",  "d", "Morn"]
+        #self.quest_results=[True, True, False, False]
+        self.quest_results=[]
+        self.players = []
+        #self.players=["a", "b", "c",  "d", "Morn"]
         self.players.sort()
         self.roles=[]
         self.bot = bot
@@ -200,7 +201,7 @@ class AvalonGame:
         self.game_args = []
 
     def handle_privmsg(self, nick, msg):
-        print("privmsg from {}: {}".format(nick, msg))
+        #print("privmsg from {}: {}".format(nick, msg))
         msg=msg.lower()
         if msg=="accept" or msg=="a":
             self.handle_accept_reject(nick, accept=True)
@@ -216,7 +217,7 @@ class AvalonGame:
             self.bot.send_privmsg(nick, "Unsupported command. Supported commands via private message are accept, reject, success, fail, identify.")
 
     def handle_pubmsg(self, nick, msg):
-        print("pubmsg from {}: {}".format(nick, msg))
+        #print("pubmsg from {}: {}".format(nick, msg))
 
         if msg.startswith("!"):
             cmd=msg[1:].split(" ")[0].lower()
@@ -455,7 +456,7 @@ class AvalonGame:
             else:
                 good_roles.append("{}x {}".format(count, role))
 
-        print(count_evil, count_good)
+        #print(count_evil, count_good)
         return "Good role cards in play: {}. Evil role cards in play: {}.".format(
             ", ".join(good_roles),
             ", ".join(evil_roles)
@@ -682,7 +683,7 @@ class AvalonGame:
 
         self.enter_teamsel()
 
-    def handle_identify(self):
+    def handle_identify(self, nick):
         pass
 
     def players_str(self):
@@ -783,7 +784,7 @@ class AvalonBot(irc.bot.SingleServerIRCBot):
         irc.bot.SingleServerIRCBot.__init__(self, [(server, port)], nickname, nickname)
         self.channel = channel
         self.game = AvalonGame(self)
-        self.debug_game = True
+        self.debug_game = False
         self.highscore = Highscore(highscore_filename)
 
     def on_nicknameinuse(self, c, e):
