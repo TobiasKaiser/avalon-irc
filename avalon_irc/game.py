@@ -1,148 +1,11 @@
-#!/usr/bin/env python3
 
-import irc.bot
-import json
-import string
-import random
+import collections
 import copy
-from collections import namedtuple
+import random
 
-Quest = namedtuple('Quest', 'team_size fails_required')
+from .roles import *
+Quest = collections.namedtuple('Quest', 'team_size fails_required')
 
-
-class Role:
-    is_assassin = False
-    is_merlin = False
-    is_percival = False
-    unknown_to_merlin = False
-    looks_like_merlin_to_percival = False
-
-    def __init__(self, nick):
-        self.nick = nick
-
-    def get_initial_knowledge(self, game):
-        return "You have no knowledge of other identities."
-    
-    def validate_roles(self, roles):
-        """Return True if roles contain all roles that are required for this role to participate properly in the game."""
-        return True
-
-class RoleMinionOfMordred(Role):
-    short_name="minion"
-    long_name="Minion of Mordred"
-    long_name_article="a Minion of Mordred"
-    description="evil player with knowledge of the identities of the other Minions of Mordred"
-
-    evil = True
-    is_minion_of_mordred = True
-
-    def get_initial_knowledge(self, game):
-        fellow_minions=[]
-        for player in game.players:
-            if player == self.nick:
-                continue
-            if game.get_role(player).is_minion_of_mordred:
-                fellow_minions.append(player)
-        if len(fellow_minions)==0:
-            return "There is no fellow Minion of Mordred."
-        if len(fellow_minions)==1:
-            return "Your fellow Minion of Mordred is {}.".format(fellow_minions[0])
-        else:
-            return "Your fellow Minions of Mordred are {}.".format(", ".join(fellow_minions))
-
-class RoleAssassin(RoleMinionOfMordred):
-    short_name="assassin"
-    long_name="Assassin"
-    long_name_article="the Assassin"
-    description="evil player with knowledge of the identities of the other Minions of Mordred and the option to win the game by identifying Merlin"
-
-    is_assassin = True
-
-class RoleLoyalServantOfArthur(Role):
-    short_name="servant"
-    long_name="Loyal Servant of Arthur"
-    long_name_article="a Loyal Servant of Arthur"
-    description="good player with no knowledge about identities of other players"
-
-    evil = False
-    is_minion_of_mordred = False
-
-class RoleMerlin(RoleLoyalServantOfArthur):
-    short_name="merlin"
-    long_name="Merlin"
-    long_name_article="Merlin"
-    description="good player with knowledge of the identities of the Minions of Mordred"
-    is_merlin = True
-    looks_like_merlin_to_percival = True
-
-    def get_initial_knowledge(self, game):
-        minions=[]
-        for player in game.players:
-            role = game.get_role(player)
-            if role.unknown_to_merlin:
-                continue
-            if role.is_minion_of_mordred:
-                minions.append(player)
-        if len(minions)==1:
-            return "The Minion of Mordred is {}.".format(minions[0])
-        else:
-            return "The Minions of Mordred are {}.".format(", ".join(minions))    
-
-# Optional roles
-# --------------
-
-class RolePercival(RoleLoyalServantOfArthur):
-    short_name="percival"
-    long_name="Percival"
-    long_name_article="Percival"
-    description="good player with knowledge of the identity of Merlin"
-    is_percival = True
-
-    def get_initial_knowledge(self, game):
-        merlins=[]
-        for player in game.players:
-            role = game.get_role(player)
-            if role.looks_like_merlin_to_percival:
-                merlins.append(player)
-        return "{} {} Merlin.".format(
-            " and ".join(merlins),
-            "is" if len(merlins) == 1 else "are"
-        )
-
-class RoleMordred(RoleMinionOfMordred):
-    short_name="mordred"
-    long_name="Mordred"
-    long_name_article="Mordred"
-    description="evil player with knowledge of the identities of the other Minions of Mordred, unknown to Merlin"
-
-    unknown_to_merlin=True
-
-class RoleOberon(RoleMinionOfMordred):
-    short_name="oberon"
-    long_name="Oberon"
-    long_name_article="Oberon"
-    description="evil player who does not know and is unknown to the Minions of Mordred"
-
-    is_minion_of_mordred = False
-
-    def get_initial_knowledge(self, game):
-        return "You have no knowledge of other identities."
-
-class RoleMorgana(RoleMinionOfMordred):
-    short_name="morgana"
-    long_name="Morgana"
-    long_name_article="Morgana"
-    description="evil player with knowledge of the identities of the other Minions of Mordred, to Percival appears as Merlin"
-
-    looks_like_merlin_to_percival = True
-
-    def validate_roles(self, all_roles):
-        # Percival needs to present for Morgana to participate.
-        percival_present=False
-        for role in all_roles:
-            if role.is_percival:
-                percival_present = True
-        return percival_present
 
 class AvalonGame:
 
@@ -293,7 +156,7 @@ class AvalonGame:
         evil_player_count = self.game_plans_evil_count[len(self.players)]
         good_player_count = len(self.players) - evil_player_count
 
-        evil_roles = [RoleAssassin]
+        evil_roles = [RoleAssassin, RoleMordred]
         if "mordred" in self.game_args:
             evil_roles.append(RoleMordred)
         if "oberon" in self.game_args:
@@ -301,7 +164,7 @@ class AvalonGame:
         if "morgana" in self.game_args:
             evil_roles.append(RoleMorgana)
 
-        good_roles = [RoleMerlin]
+        good_roles = [RoleMerlin, RolePercival]
         if "percival" in self.game_args:
             good_roles.append(RolePercival)
 
@@ -734,128 +597,3 @@ class AvalonGame:
                 else:
                     losers.append(player)
         return winners, losers
-
-class Highscore:
-    def __init__(self, json_filename):
-        self.json_filename=json_filename
-        self.load()
-
-    def load(self):
-        try:
-            with open(self.json_filename, "r") as f:
-                self.data = json.load(f)
-        except FileNotFoundError:
-            self.data={}
-            self.save()
-
-    def save(self):
-        with open(self.json_filename, "w") as f:
-            json.dump(self.data, f, indent=4)
-
-    def ensure_record_exists(self, player):
-        if not player in self.data:
-            self.data[player]={
-                "won":0,
-                "lost":0
-            }
-
-    def update(self, winners, losers):
-        for winner in winners:
-            self.ensure_record_exists(winner)
-            self.data[winner]["won"]+=1
-        for loser in losers:
-            self.ensure_record_exists(loser)
-            self.data[loser]["lost"]+=1
-        self.save()
-
-    def get_highscore_str(self):
-        entries = list(self.data.items())
-        entries.sort(key=lambda p: p[1]["won"], reverse=True)
-        entries_str=[]
-        for player, player_data in entries:
-            entries_str.append("{} (won: {}, lost: {})".format(
-                player, player_data["won"], player_data["lost"]
-            ))
-        return ", ".join(entries_str)
-
-
-class AvalonBot(irc.bot.SingleServerIRCBot):
-    def __init__(self, channel, nickname, server, port=6667, highscore_filename="highscore.json"):
-        irc.bot.SingleServerIRCBot.__init__(self, [(server, port)], nickname, nickname)
-        self.channel = channel
-        self.game = AvalonGame(self)
-        self.debug_game = False
-        self.highscore = Highscore(highscore_filename)
-
-    def on_nicknameinuse(self, c, e):
-        c.nick(c.get_nickname() + "_")
-
-    def on_welcome(self, c, e):
-        c.join(self.channel)
-
-    def check_finish(self):
-        if self.game.phase == AvalonGame.Finished:
-            # Start new game:
-            self.game = AvalonGame(self)
-            
-
-    def on_privmsg(self, c, e):
-        nick = e.source.split("!")[0]
-        msg = e.arguments[0]
-        self.game.handle_privmsg(nick, msg)
-        self.check_finish()
-        
-    def on_pubmsg(self, c, e):
-        nick = e.source.split("!")[0]
-        msg = e.arguments[0]
-        if self.debug_game and msg.startswith("!!"):
-            first_excl = msg[2:].find("!")
-            if first_excl>=0:
-                print("Debug pubmsg received.")
-                self.game.handle_pubmsg(msg[2:2+first_excl], msg[2+first_excl:])
-        if self.debug_game and msg.startswith("@@"):
-            first_excl = msg[2:].find(" ")
-            if first_excl>=0:
-                print("Debug privmsg received.")
-                self.game.handle_privmsg(msg[2:2+first_excl], msg[2+first_excl+1:])
-        else:
-            self.game.handle_pubmsg(nick, msg)
-        self.check_finish()
-    
-    def send_pubmsg(self, msg):
-        """Send message to all players. For use by AvalonGame class."""
-        self.connection.privmsg(self.channel, msg)
-
-    def send_privmsg(self, nick, msg):
-        """Send private message to one player. For use by AvalonGame class."""
-        self.connection.privmsg(nick, msg)
-        #self.connection.notice(nick, msg)
-        if self.debug_game:
-            print("privmsg to {}: {}".format(nick, msg))
-            #self.send_pubmsg("((privmsg to {}: {}))".format(nick, msg))
-        
-def main():
-    import sys
-
-    if len(sys.argv) != 4:
-        print("Usage: avalon-irc <server[:port]> <channel> <nickname>")
-        sys.exit(1)
-
-    s = sys.argv[1].split(":", 1)
-    server = s[0]
-    if len(s) == 2:
-        try:
-            port = int(s[1])
-        except ValueError:
-            print("Error: Erroneous port.")
-            sys.exit(1)
-    else:
-        port = 6667
-    channel = sys.argv[2]
-    nickname = sys.argv[3]
-
-    bot = AvalonBot(channel, nickname, server, port)
-    bot.start()
-
-if __name__ == "__main__":
-    main()
