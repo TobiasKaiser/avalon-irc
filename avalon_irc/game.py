@@ -148,7 +148,7 @@ class AvalonGame:
             self.bot.send_pubmsg("{}: You are not registered.".format(nick))
 
 
-    def assign_roles(self):
+    def assign_roles(self, optional_good_roles=[], optional_evil_roles=[]):
         """Assigns roles to players by assigning self.roles list.
         If role assignment is successful, return True, else return False.
         """
@@ -156,7 +156,7 @@ class AvalonGame:
         evil_player_count = self.game_plans_evil_count[len(self.players)]
         good_player_count = len(self.players) - evil_player_count
 
-        evil_roles = [RoleAssassin, RoleMordred]
+        evil_roles = [RoleAssassin] + optional_evil_roles
         if "mordred" in self.game_args:
             evil_roles.append(RoleMordred)
         if "oberon" in self.game_args:
@@ -164,7 +164,7 @@ class AvalonGame:
         if "morgana" in self.game_args:
             evil_roles.append(RoleMorgana)
 
-        good_roles = [RoleMerlin, RolePercival]
+        good_roles = [RoleMerlin] + optional_good_roles
         if "percival" in self.game_args:
             good_roles.append(RolePercival)
 
@@ -203,30 +203,49 @@ class AvalonGame:
 
         # Send info to all players
         for player in self.players:
-            role = self.get_role(player)
-            msg = "You are {} ({}). {}".format(role.long_name_article, role.description, role.get_initial_knowledge(self))
-            self.bot.send_privmsg(player, msg)
+            self.send_rolemsg(player)
 
         return True
 
+    def send_rolemsg(self, player):
+        role = self.get_role(player)
+        msg = "You are {} ({}). {}".format(role.long_name_article, role.description, role.get_initial_knowledge(self))
+        self.bot.send_privmsg(player, msg)
 
     def handle_start(self, nick, arg):
 
-
-        if not (self.phase == AvalonGame.Assemble):
-            self.bot.send_pubmsg("{}: Command not available.".format(nick))
-            return
-
-        if not (nick in self.players):
-            self.bot.send_pubmsg("{}: You are not registerd for the game.".format(nick))
-            return
+        #optional_good_roles = []
+        #optional_evil_roles = []
+        #for opt in arg.strip().split():
+        #    if opt == "-percival":
+        #        optional_good_roles.append(RolePercival)
+        #    elif opt == "-mordred":
+        #        optional_evil_roles.append(RoleMordred)
+        #    elif opt == "-oberon":
+        #        optional_evil_roles.append(RoleOberon)
+        #    elif opt == "-morgana":
+        #        optional_evil_roles.append(RoleMorgana)
+        #    elif opt == "-help":
+        #        self.bot.send_pubmsg("{}: Available options are -percival, -mordred, -oberon, -morgana.".format(nick))
+        #        return
+        #    else:
+        #        self.bot.send_pubmsg("{}: Unknown option. Type !start -help to get help.".format(nick))
+        #        return
+        #
+        #if not (self.phase == AvalonGame.Assemble):
+        #    self.bot.send_pubmsg("{}: Command not available.".format(nick))
+        #    return
+        #
+        #if not (nick in self.players):
+        #    self.bot.send_pubmsg("{}: You are not registerd for the game.".format(nick))
+        #    return
 
         # Evaluate args:
         game_args=arg.lower().strip().split()
         
         for arg in game_args:
             if not (arg in self.valid_game_args):
-                self.bot.send_pubmsg("{}: Invalid game argument.".format(nick))
+                self.bot.send_pubmsg("{}: Invalid game argument. Valid game arguments are {}".format(nick, ", ".join(self.valid_game_args)))
                 return
 
         self.game_args = game_args
@@ -238,6 +257,8 @@ class AvalonGame:
         if len(self.players)>10:
             self.bot.send_pubmsg("{}: At most ten players are required to start.".format(nick))
             return
+
+
 
         if not self.assign_roles():
             self.bot.send_pubmsg("Game could not be started due to error in assigning roles. Please check your options for consistency.")
@@ -547,7 +568,8 @@ class AvalonGame:
         self.enter_teamsel()
 
     def handle_identify(self, nick):
-        pass
+        if nick in self.players:
+            self.send_rolemsg(nick)
 
     def players_str(self):
         return ", ".join(self.players) if len(self.players) >= 1 else "none"
