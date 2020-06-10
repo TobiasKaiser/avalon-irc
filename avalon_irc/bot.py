@@ -3,6 +3,7 @@ import irc.bot
 import string
 from .game import AvalonGame
 from .highscore import Highscore
+import textwrap
 
 
 class AvalonBot(irc.bot.SingleServerIRCBot):
@@ -50,7 +51,8 @@ class AvalonBot(irc.bot.SingleServerIRCBot):
     
     def send_pubmsg(self, msg):
         """Send message to all players. For use by AvalonGame class."""
-        self.connection.privmsg(self.channel, msg)
+        for line in textwrap.wrap(msg, 200):
+            self.connection.privmsg(self.channel, line)
 
     def send_privmsg(self, nick, msg):
         """Send private message to one player. For use by AvalonGame class."""
